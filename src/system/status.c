@@ -11,9 +11,9 @@ static int status_state = 0;
 LOG_MODULE_REGISTER(status, LOG_LEVEL_INF);
 
 static void status_error_thread(void);
-K_THREAD_DEFINE(status_error_thread_id, 256, status_error_thread, NULL, NULL, NULL, STATUS_ERROR_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(status_error_thread_id, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), status_error_thread, NULL, NULL, NULL, STATUS_ERROR_THREAD_PRIORITY, 0, 0);
 static void status_warn_thread(void);
-K_THREAD_DEFINE(status_warn_thread_id, 256, status_warn_thread, NULL, NULL, NULL, STATUS_WARN_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(status_warn_thread_id, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), status_warn_thread, NULL, NULL, NULL, STATUS_WARN_THREAD_PRIORITY, 0, 0);
 
 void set_status(enum sys_status status, bool set)
 {

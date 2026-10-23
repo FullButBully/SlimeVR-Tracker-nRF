@@ -1,0 +1,47 @@
+/* Apply after tracker.overlay or wiring.overlay. P1 wiring uses SPIM21:
+ * SCK=P1.04, SDI/MOSI=P1.05, SDO/MISO=P1.06, CS=P1.07, INT1=P1.11.
+ * Keep hardware.overlay as the reproducible P2/SPIM00 comparison profile.
+ */
+/delete-node/ &imu_spi;
+/delete-node/ &imu_bus;
+
+&spi00 {
+	status = "disabled";
+};
+
+&pinctrl {
+	lsm_p1_default: lsm_p1_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 4)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 5)>,
+				<NRF_PSEL(SPIM_MISO, 1, 6)>;
+		};
+	};
+	lsm_p1_sleep: lsm_p1_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 4)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 5)>,
+				<NRF_PSEL(SPIM_MISO, 1, 6)>;
+			low-power-enable;
+		};
+	};
+};
+
+&spi21 {
+	status = "okay";
+	cs-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&lsm_p1_default>;
+	pinctrl-1 = <&lsm_p1_sleep>;
+	pinctrl-names = "default", "sleep";
+	imu_spi: imu@0 {
+		compatible = "vnd,spi-device";
+		reg = <0>;
+		spi-max-frequency = <2000000>;
+	};
+};
+
+/ {
+	zephyr,user {
+		int0-gpios = <&gpio1 11 GPIO_ACTIVE_LOW>;
+	};
+};

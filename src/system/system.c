@@ -29,12 +29,12 @@ static struct nvs_fs fs;
 LOG_MODULE_REGISTER(system, LOG_LEVEL_INF);
 
 static void temp_thread(void);
-K_THREAD_DEFINE(temp_thread_id, 256, temp_thread, NULL, NULL, NULL, TEMP_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(temp_thread_id, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), temp_thread, NULL, NULL, NULL, TEMP_THREAD_PRIORITY, 0, 0);
 
 #if DT_NODE_HAS_PROP(DT_ALIAS(sw0), gpios) // Alternate button if available to use as "reset key"
 #define BUTTON_EXISTS true
 static void button_thread(void);
-K_THREAD_DEFINE(button_thread_id, 256, button_thread, NULL, NULL, NULL, BUTTON_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(button_thread_id, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), button_thread, NULL, NULL, NULL, BUTTON_THREAD_PRIORITY, 0, 0);
 #else
 #pragma message "Button GPIO does not exist"
 #endif

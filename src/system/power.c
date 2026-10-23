@@ -54,10 +54,10 @@ static void sys_system_reboot(void);
 static int sys_power_state_request(int id);
 
 static void disable_DFU_thread(void);
-K_THREAD_DEFINE(disable_DFU_thread_id, 128, disable_DFU_thread, NULL, NULL, NULL, DISABLE_DFU_THREAD_PRIORITY, 0, 500); // disable DFU if the system is running correctly
+K_THREAD_DEFINE(disable_DFU_thread_id, (128 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), disable_DFU_thread, NULL, NULL, NULL, DISABLE_DFU_THREAD_PRIORITY, 0, 500); // disable DFU if the system is running correctly
 
 static void power_thread(void);
-K_THREAD_DEFINE(power_thread_id, 1024, power_thread, NULL, NULL, NULL, POWER_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(power_thread_id, (1024 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), power_thread, NULL, NULL, NULL, POWER_THREAD_PRIORITY, 0, 0);
 
 #define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
 
@@ -89,19 +89,30 @@ static const struct gpio_dt_spec chg_en = GPIO_DT_SPEC_GET(ZEPHYR_USER_NODE, chg
 
 static void sys_disconnect_interface_pins(void)
 {
-	// interface pins are disconnected according to devicetree, so only need to disconnect any cs pins
+	// SPI clock/data use sleep pinctrl. Keep CS inactive so the powered IMU
+	// is not selected by a floating GPIO during System OFF.
 	// int pin already configured by power off
 #if DT_SPI_DEV_HAS_CS_GPIOS(DT_NODELABEL(imu_spi))
-	uint32_t imu_cs_gpios = DT_SPI_DEV_CS_GPIOS_PIN(DT_NODELABEL(imu_spi));
+	uint32_t imu_cs_gpios = NRF_DT_GPIOS_TO_PSEL(DT_BUS(DT_NODELABEL(imu_spi)), cs_gpios);
 	LOG_INF("IMU CS GPIO pin: %u", imu_cs_gpios);
-	nrf_gpio_cfg_default(imu_cs_gpios);
-	LOG_INF("Disconnected IMU CS GPIO");
+	const struct gpio_dt_spec imu_cs = GPIO_DT_SPEC_GET_BY_IDX(
+		DT_BUS(DT_NODELABEL(imu_spi)), cs_gpios, DT_REG_ADDR_RAW(DT_NODELABEL(imu_spi)));
+	int imu_cs_err = gpio_pin_configure_dt(&imu_cs, GPIO_OUTPUT_INACTIVE);
+	if (imu_cs_err)
+		LOG_ERR("Failed to park IMU CS: %d", imu_cs_err);
+	else
+		LOG_INF("Parked IMU CS inactive");
 #endif
 #if DT_SPI_DEV_HAS_CS_GPIOS(DT_NODELABEL(mag_spi))
-	uint32_t mag_cs_gpios = DT_SPI_DEV_CS_GPIOS_PIN(DT_NODELABEL(mag_spi)));
+	uint32_t mag_cs_gpios = NRF_DT_GPIOS_TO_PSEL(DT_BUS(DT_NODELABEL(mag_spi)), cs_gpios);
 	LOG_INF("Magnetometer CS GPIO pin: %u", mag_cs_gpios);
-	nrf_gpio_cfg_default(mag_cs_gpios);
-	LOG_INF("Disconnected Magnetometer CS GPIO");
+	const struct gpio_dt_spec mag_cs = GPIO_DT_SPEC_GET_BY_IDX(
+		DT_BUS(DT_NODELABEL(mag_spi)), cs_gpios, DT_REG_ADDR_RAW(DT_NODELABEL(mag_spi)));
+	int mag_cs_err = gpio_pin_configure_dt(&mag_cs, GPIO_OUTPUT_INACTIVE);
+	if (mag_cs_err)
+		LOG_ERR("Failed to park magnetometer CS: %d", mag_cs_err);
+	else
+		LOG_INF("Parked Magnetometer CS inactive");
 #endif
 /*
 	TODO: for promicro, leaving ext_vcc on draws ~50uA, disconnect works, pulldown may be more reliable
@@ -240,6 +251,8 @@ static void wait_for_logging(void)
 		k_msleep(200);
 	}
 #endif
+	/* Flush deferred RTT messages too before System OFF or reset. */
+	log_flush();
 }
 
 #if IMU_INT_EXISTS
@@ -339,6 +352,7 @@ static void sys_system_off(bool silent) // TODO: add timeout
 {
 	LOG_INF("System off requested");
 	configure_system_off(); // Common subsystem shutdown and prepare sense pins
+	esb_prepare_system_off();
 	int64_t start_time = k_uptime_get();
 	if (!silent) // indicate shutdown is happening
 		set_led(SYS_LED_PATTERN_ONESHOT_POWEROFF, SYS_LED_PRIORITY_HIGHEST);
@@ -560,7 +574,7 @@ static void power_thread(void)
 		// chg_ret = 0 and chg_temp_warn = true: out of temp range, charger is disabled or already has thermistor
 		LOG_DBG("Die: %.2f C, Sensor: %.2f C, sys: %d, sensor: %d, wrn: %d, plugged: %d, ret: %d", (double)die_temp, (double)sensor_temp, sys_ret, sensor_ret, chg_temp_warn, device_plugged, chg_ret);
 
-		int battery_mV;
+		int battery_mV = 0;
 		int16_t battery_pptt = read_batt_mV(&battery_mV);
 		if (battery_pptt < 0)
 			LOG_ERR("Failed to read battery voltage: %d", battery_pptt);

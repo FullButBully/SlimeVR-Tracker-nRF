@@ -55,7 +55,7 @@ LOG_MODULE_REGISTER(hid_event, LOG_LEVEL_INF);
 
 static void hid_thread(void);
 static struct k_thread hid_thread_id;
-static K_THREAD_STACK_DEFINE(hid_thread_id_stack, 256);
+static K_THREAD_STACK_DEFINE(hid_thread_id_stack, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE));
 
 static const uint8_t hid_report_desc[] = {
 	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),

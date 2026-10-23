@@ -99,7 +99,19 @@ int sensor_interface_spi_configure(enum sensor_interface_dev dev, uint32_t frequ
 {
 	if (sensor_interface_dev_spec[dev] != SENSOR_INTERFACE_SPEC_SPI)
 		return -1; // no spi device registered
-	sensor_interface_dev_spi[dev]->config.frequency = frequency;
+	/* Drivers may request a higher clock than a particular board's wiring allows.
+	 * Keep the devicetree limit in force after sensor identification as well.
+	 */
+	uint32_t max_frequency = UINT32_MAX;
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(imu_spi))
+	if (dev == SENSOR_INTERFACE_DEV_IMU)
+		max_frequency = DT_PROP(DT_NODELABEL(imu_spi), spi_max_frequency);
+#endif
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(mag_spi))
+	if (dev == SENSOR_INTERFACE_DEV_MAG)
+		max_frequency = DT_PROP(DT_NODELABEL(mag_spi), spi_max_frequency);
+#endif
+	sensor_interface_dev_spi[dev]->config.frequency = MIN(frequency, max_frequency);
 	sensor_interface_dev_spi_dummy_reads[dev] = dummy_reads; // shoutout to BMI270
 	return 0;
 }

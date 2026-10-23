@@ -1,0 +1,39 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/* RTT is used for validation. Keep UART20 off in both P1/P2 comparison
+ * profiles, and release P1.04..P1.07 for the P1 SPI wiring.
+ */
+&uart20 {
+	status = "disabled";
+};
+
+/* Exact user wiring: sensor SDI=P2.04, SDO=P2.08.
+ * SPIM00 cannot output MOSI on P2.04; use software SPI for this wiring.
+ * DK external memory must be disconnected, as confirmed on the test setup.
+ */
+&spi00 {
+	status = "disabled";
+	/delete-node/ mx25r6435f@0;
+};
+
+/ {
+	zephyr,user {
+		int0-gpios = <&gpio2 3 GPIO_ACTIVE_LOW>;
+	};
+
+	imu_bus: imu-bus {
+		compatible = "zephyr,spi-bitbang";
+		status = "okay";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clk-gpios = <&gpio2 6 GPIO_ACTIVE_HIGH>;
+		mosi-gpios = <&gpio2 4 GPIO_ACTIVE_HIGH>;
+		miso-gpios = <&gpio2 8 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&gpio2 10 GPIO_ACTIVE_LOW>;
+		imu_spi: imu@0 {
+			compatible = "vnd,spi-device";
+			reg = <0>;
+			spi-max-frequency = <125000>;
+		};
+	};
+};

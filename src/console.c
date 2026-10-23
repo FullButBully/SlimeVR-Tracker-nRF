@@ -31,9 +31,9 @@ LOG_MODULE_REGISTER(console, LOG_LEVEL_INF);
 static void console_thread(void);
 #if USB_EXISTS
 static struct k_thread console_thread_id;
-static K_THREAD_STACK_DEFINE(console_thread_id_stack, 1024); // TODO: larger stack size to handle print info
+static K_THREAD_STACK_DEFINE(console_thread_id_stack, (1024 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE)); // TODO: larger stack size to handle print info
 #else
-K_THREAD_DEFINE(console_thread_id, 1024, console_thread, NULL, NULL, NULL, CONSOLE_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(console_thread_id, (1024 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), console_thread, NULL, NULL, NULL, CONSOLE_THREAD_PRIORITY, 0, 0);
 #endif
 
 #define DFU_EXISTS CONFIG_BUILD_OUTPUT_UF2 || CONFIG_BOARD_HAS_NRF5_BOOTLOADER

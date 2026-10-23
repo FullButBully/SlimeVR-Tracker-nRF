@@ -45,12 +45,16 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 int main(void)
 {
 #ifdef NRF_RESET
-	bool reset_pin_reset = NRF_RESET->RESETREAS & RESET_RESETREAS_RESETPIN_Msk;
+	uint32_t reset_reason = NRF_RESET->RESETREAS;
+	bool reset_pin_reset = reset_reason & RESET_RESETREAS_RESETPIN_Msk;
 	NRF_RESET->RESETREAS = NRF_RESET->RESETREAS; // Clear RESETREAS
 #else
-	bool reset_pin_reset = NRF_POWER->RESETREAS & POWER_RESETREAS_RESETPIN_Msk;
+	uint32_t reset_reason = NRF_POWER->RESETREAS;
+	bool reset_pin_reset = reset_reason & POWER_RESETREAS_RESETPIN_Msk;
 	NRF_POWER->RESETREAS = NRF_POWER->RESETREAS; // Clear RESETREAS
 #endif
+	LOG_INF("Boot reset reason: 0x%08X, button=%d, user_shutdown=%d",
+		reset_reason, button_read(), CONFIG_0_SETTINGS_READ(CONFIG_0_USER_SHUTDOWN));
 
 #if BUTTON_EXISTS
 	if (CONFIG_0_SETTINGS_READ(CONFIG_0_IGNORE_RESET))

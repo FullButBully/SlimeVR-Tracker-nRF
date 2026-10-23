@@ -19,7 +19,7 @@ static bool configured;
 LOG_MODULE_REGISTER(usb, LOG_LEVEL_INF);
 
 static void usb_init_thread(void);
-K_THREAD_DEFINE(usb_init_thread_id, 512, usb_init_thread, NULL, NULL, NULL, USB_INIT_THREAD_PRIORITY, 0, 500); // Wait before enabling USB
+K_THREAD_DEFINE(usb_init_thread_id, (512 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), usb_init_thread, NULL, NULL, NULL, USB_INIT_THREAD_PRIORITY, 0, 500); // Wait before enabling USB
 
 static void status_cb(enum usb_dc_status_code status, const uint8_t *param)
 {

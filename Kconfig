@@ -4,6 +4,18 @@
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
 #
 
+config APP_THREAD_STACK_EXTRA_SIZE
+    int "Additional stack bytes per application thread"
+    range 0 8192
+    default 0
+    help
+        Extra stack headroom for platforms and SDK versions with larger
+        driver, logging and floating-point context requirements.
+
+config SENSOR_DIAGNOSTICS
+    bool "Log sensor sample counters and quaternion for bench validation"
+    default n
+
 config USE_SLIMENRF_CONSOLE
     bool "Use basic console"
     default y
@@ -259,6 +271,24 @@ config SENSOR_GYRO_ODR
         Requested gyrometer output data rate. Actual rate will be raised to the nearest supported rate.
         A higher rate will increase the time to read and process sensor data.
         A lower rate is recommended for IMUs with poor gyrometer rate noise density. (e.g. BMI270, LSM6DS3TR-C)
+
+config SENSOR_STARTUP_DELAY_MS
+    int "Sensor supply settling delay before discovery (ms)"
+    range 0 5000
+    default 0
+    help
+        Wait after enabling sensor interfaces before the first discovery.
+        Use this for externally powered sensors that start after the MCU.
+
+config SENSOR_SCAN_RETRY_COUNT
+    int "Sensor discovery retries"
+    range 0 100
+    default 1
+
+config SENSOR_SCAN_RETRY_DELAY_MS
+    int "Delay between sensor discovery attempts (ms)"
+    range 1 5000
+    default 5
 
 config SENSOR_ACCEL_FS
     int "Accelerometer full scale (g)"

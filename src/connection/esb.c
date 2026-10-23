@@ -53,6 +53,7 @@ static struct esb_payload tx_payload_pair = ESB_CREATE_PAYLOAD(0,
 static uint8_t paired_addr[8] = {0};
 
 static bool esb_initialized = false;
+static bool esb_powering_off;
 static bool esb_paired = false;
 
 #define TX_ERROR_THRESHOLD 30
@@ -62,7 +63,7 @@ static bool esb_paired = false;
 LOG_MODULE_REGISTER(esb_event, LOG_LEVEL_INF);
 
 static void esb_thread(void);
-K_THREAD_DEFINE(esb_thread_id, 512, esb_thread, NULL, NULL, NULL, ESB_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(esb_thread_id, (512 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), esb_thread, NULL, NULL, NULL, ESB_THREAD_PRIORITY, 0, 0);
 
 uint64_t pairing_packets = 0;
 
@@ -167,6 +168,15 @@ SYS_INIT(clocks_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 int clocks_start(void)
 {
+	/* When ESB owns the clock, its init/disable calls also own the nRF54L
+	 * PLL and constant-latency workarounds. Starting PLL again per packet can
+	 * interrupt an in-flight transmission and leave TX waiting for PHYEND.
+	 */
+	if (IS_ENABLED(CONFIG_ESB_CLOCK_INIT))
+	{
+		clock_status = true;
+		return 0;
+	}
 	if (clock_status)
 		return 0;
 	int err;
@@ -210,6 +220,11 @@ int clocks_start(void)
 
 void clocks_stop(void)
 {
+	if (IS_ENABLED(CONFIG_ESB_CLOCK_INIT))
+	{
+		clock_status = false;
+		return;
+	}
 	if (!clock_status)
 		return;
 	clock_status = false;
@@ -224,7 +239,7 @@ BUILD_ASSERT(false, "No Clock Control driver");
 #endif
 
 static struct k_thread clocks_thread_id;
-static K_THREAD_STACK_DEFINE(clocks_thread_id_stack, 128);
+static K_THREAD_STACK_DEFINE(clocks_thread_id_stack, (128 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE));
 
 void clocks_request_start(uint32_t delay_us)
 {
@@ -232,7 +247,7 @@ void clocks_request_start(uint32_t delay_us)
 }
 
 static struct k_thread clocks_stop_thread_id;
-static K_THREAD_STACK_DEFINE(clocks_stop_thread_id_stack, 128);
+static K_THREAD_STACK_DEFINE(clocks_stop_thread_id_stack, (128 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE));
 
 void clocks_request_stop(uint32_t delay_us)
 {
@@ -321,6 +336,17 @@ void esb_deinitialize(void)
 		esb_disable();
 	}
 	esb_initialized = false;
+}
+
+void esb_prepare_system_off(void)
+{
+	/* Stop new work before releasing the SDK-owned radio clock and PLL. */
+	esb_powering_off = true;
+	k_thread_suspend(esb_thread_id);
+	esb_deinitialize();
+	clocks_stop();
+	send_data = false;
+	LOG_INF("ESB disabled for System OFF");
 }
 
 inline void esb_set_addr_discovery(void)
@@ -481,7 +507,7 @@ void esb_clear_pair(void)
 
 void esb_write(uint8_t *data)
 {
-	if (!esb_initialized || !esb_paired)
+	if (esb_powering_off || !esb_initialized || !esb_paired)
 		return;
 	if (!clock_status)
 		clocks_start();

@@ -1,0 +1,14 @@
+#include "wiring.overlay"
+#include "../../socs/nrf54l15_cpuapp.overlay"
+#include <zephyr/dt-bindings/adc/nrf-saadc.h>
+
+/ {
+	battery-divider {
+		compatible = "voltage-divider";
+		status = "okay";
+		/* DK has no battery divider; measure the internal VDD input directly. */
+		io-channels = <&adc NRF_SAADC_VDD>;
+		output-ohms = <0>;
+		full-ohms = <0>;
+	};
+};

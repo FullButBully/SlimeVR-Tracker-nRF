@@ -15,6 +15,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
+#include <ncs_version.h>
 
 #if __has_include(<zephyr/dt-bindings/adc/nrf-saadc-v3.h>)
 #include <zephyr/dt-bindings/adc/nrf-saadc-v3.h>
@@ -129,6 +130,14 @@ static int divider_setup(void)
 	else if (max_adc_voltage < 3.0f)
 		battery_adc_gain = ADC_GAIN_1_5;
 
+#if defined(CONFIG_SOC_SERIES_NRF54L) || defined(CONFIG_SOC_SERIES_NRF54LX)
+	/* nRF54L has a 0.9 V reference and no 1/6 gain. Direct VDD needs
+	 * a supported gain with at least a 3.6 V full-scale input range.
+	 */
+	if (cfg->output_ohm == 0)
+		battery_adc_gain = ADC_GAIN_1_4;
+#endif
+
 	LOG_INF("ADC gain enum: %d, max voltage: %.2f mV",
 		battery_adc_gain, (double)(max_adc_voltage * 1000.0f));
 
@@ -147,7 +156,11 @@ static int divider_setup(void)
 		accp->input_positive = iocp->channel; // >=sdk 3.2.0, SAADC_CH_PSELP_PSELP_AnalogInput0 does not match! Instead use NRF_SAADC_AIN0
 #endif
 	} else {
-		accp->input_positive = 9; // SAADC_CH_PSELP_PSELP_VDD
+#if NCS_VERSION_MAJOR <= 3 && NCS_VERSION_MINOR <= 1
+		accp->input_positive = 9; // legacy SAADC_CH_PSELP_PSELP_VDD
+#else
+		accp->input_positive = NRF_SAADC_VDD;
+#endif
 	}
 
 	if (iocp->channel == NRF_SAADC_VDDHDIV5) { // VDDHDIV5
@@ -300,6 +313,7 @@ int read_batt()
 
 int read_batt_mV(int *out)
 {
+	*out = 0;
 	int rc = battery_measure_enable(true);
 
 	if (rc != 0) {
@@ -314,7 +328,7 @@ int read_batt_mV(int *out)
 	if (batt_mV < 0) {
 		LOG_DBG("Failed to read battery voltage: %d",
 		       batt_mV);
-		return rc;
+		return batt_mV;
 	}
 
 	*out = batt_mV;

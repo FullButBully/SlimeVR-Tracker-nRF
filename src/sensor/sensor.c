@@ -97,6 +97,7 @@ static float mag_actual_time;
 static float sensor_actual_time;
 static int16_t sensor_fifo_threshold;
 static int64_t sensor_data_time; // ticks
+static bool sensor_irq_enabled;
 
 static bool sensor_fusion_init;
 static bool sensor_sensor_init;
@@ -129,9 +130,9 @@ static int sensor_scan(void);
 static int sensor_init(void);
 static void sensor_loop(void);
 static struct k_thread sensor_thread_id;
-static K_THREAD_STACK_DEFINE(sensor_thread_id_stack, 1024);
+static K_THREAD_STACK_DEFINE(sensor_thread_id_stack, (1024 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE));
 
-K_THREAD_DEFINE(sensor_init_thread_id, 256, sensor_request_scan, true, NULL, NULL, SENSOR_REQUEST_SCAN_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(sensor_init_thread_id, (256 + CONFIG_APP_THREAD_STACK_EXTRA_SIZE), sensor_request_scan, true, NULL, NULL, SENSOR_REQUEST_SCAN_THREAD_PRIORITY, 0, 0);
 //crashing on nrf54l at 256
 
 /* init thread handles starting scanner on the main thread, and then switches to the loop, before returning
@@ -191,11 +192,13 @@ void sensor_scan_thread(void)
 {
 	int err;
 	sys_interface_resume(); // make sure interfaces are enabled
+	if (CONFIG_SENSOR_STARTUP_DELAY_MS > 0)
+		k_msleep(CONFIG_SENSOR_STARTUP_DELAY_MS);
 	err = sensor_scan(); // IMUs discovery
-	if (err)
+	for (int retry = 0; err && retry < CONFIG_SENSOR_SCAN_RETRY_COUNT; retry++)
 	{
-		k_msleep(5);
-		LOG_INF("Retrying sensor detection");
+		k_msleep(CONFIG_SENSOR_SCAN_RETRY_DELAY_MS);
+		LOG_INF("Retrying sensor detection (%d/%d)", retry + 1, CONFIG_SENSOR_SCAN_RETRY_COUNT);
 
 		// Reset address before retrying sensor detection
 		sensor_imu_dev.addr = 0x00;
@@ -219,7 +222,7 @@ int sensor_scan(void)
 	int imu_id = -1;
 #if SENSOR_IMU_SPI_EXISTS
 	// for SPI scan, set frequency of 10MHz, it will be set later by the driver initialization if needed
-	sensor_imu_spi_dev.config.frequency = MHZ(10);
+	sensor_imu_spi_dev.config.frequency = MIN(MHZ(10), DT_PROP(SENSOR_IMU_SPI_NODE, spi_max_frequency));
 	LOG_INF("Scanning SPI bus for IMU");
 	imu_id = sensor_scan_imu_spi(&sensor_imu_spi_dev, &sensor_imu_dev_reg);
 	if (imu_id >= 0)
@@ -271,7 +274,7 @@ int sensor_scan(void)
 	int mag_id = -1;
 #if SENSOR_MAG_SPI_EXISTS
 	// for SPI scan, set frequency of 10MHz, it will be set later by the driver initialization if needed
-	sensor_mag_spi_dev.config.frequency = MHZ(10);
+	sensor_mag_spi_dev.config.frequency = MIN(MHZ(10), DT_PROP(SENSOR_MAG_SPI_NODE, spi_max_frequency));
 	LOG_INF("Scanning SPI bus for magnetometer");
 	mag_id = sensor_scan_mag_spi(&sensor_mag_spi_dev, &sensor_mag_dev_reg);
 	if (mag_id >= 0)
@@ -311,7 +314,7 @@ int sensor_scan(void)
 	}
 #endif
 #if SENSOR_MAG_EXT_EXISTS
-	if (mag_id < 0 && (sensor_imu_dev_reg & 0x80)) // SPI IMU
+	if (CONFIG_1_SETTINGS_READ(CONFIG_1_SENSOR_USE_MAG) && mag_id < 0 && (sensor_imu_dev_reg & 0x80)) // SPI IMU
 	{
 		// IMU may support I2CM if the magnetometer is connected through the IMU
 		int err = sensor_imu->ext_setup(SENSOR_EXT_MODE_I2CM_PROXY, NULL, 0);
@@ -538,7 +541,7 @@ static void set_update_time_ms(int time_ms)
 	// TODO: return pin_config and replace call in sensor_init
 #if IMU_INT_EXISTS
 	float fifo_threshold = time_ms / 1000.0f / sensor_actual_time; // target loop rate
-	sensor_fifo_threshold = fifo_threshold;
+	sensor_fifo_threshold = MAX(1, (int)fifo_threshold);
 	LOG_DBG("FIFO THS/WM/WTM: %.2f -> %d", (double)fifo_threshold, sensor_fifo_threshold);
 	sensor_imu->setup_DRDY(sensor_fifo_threshold); // do not need to reset pin config
 #endif
@@ -756,7 +759,7 @@ int sensor_init(void)
 #if IMU_INT_EXISTS
 	// Setup interrupt
 	float fifo_threshold = sensor_update_time_ms / 1000.0f / sensor_actual_time; // target loop rate
-	sensor_fifo_threshold = fifo_threshold;
+	sensor_fifo_threshold = MAX(1, (int)fifo_threshold);
 	LOG_DBG("FIFO THS/WM/WTM: %.2f -> %d", (double)fifo_threshold, sensor_fifo_threshold);
 	uint8_t pin_config = sensor_imu->setup_DRDY(sensor_fifo_threshold);
 	if (pin_config == 0)
@@ -764,11 +767,19 @@ int sensor_init(void)
 	uint32_t int0_gpios = NRF_DT_GPIOS_TO_PSEL(ZEPHYR_USER_NODE, int0_gpios);
 	LOG_DBG("FIFO THS/WM/WTM GPIO pin: %u, config: %u", int0_gpios, pin_config);
 	uint32_t pull_flags = ((pin_config >> 4) == NRF_GPIO_PIN_PULLDOWN ? GPIO_PULL_DOWN : 0) | ((pin_config >> 4) == NRF_GPIO_PIN_PULLUP ? GPIO_PULL_UP : 0);
-	gpio_pin_configure_dt(&int0, GPIO_INPUT | pull_flags);
+	err = gpio_pin_configure_dt(&int0, GPIO_INPUT | pull_flags);
+	if (err)
+		return err;
 	uint32_t int_flags = ((pin_config & 0xF) == NRF_GPIO_PIN_SENSE_LOW ? GPIO_INT_EDGE_FALLING : 0) | ((pin_config & 0xF) == NRF_GPIO_PIN_SENSE_HIGH ? GPIO_INT_EDGE_RISING : 0);
-	gpio_pin_interrupt_configure_dt(&int0, int_flags);
 	gpio_init_callback(&sensor_cb_data, sensor_interrupt_handler, BIT(int0.pin));
-	gpio_add_callback(int0.port, &sensor_cb_data);
+	err = gpio_add_callback(int0.port, &sensor_cb_data);
+	if (!err)
+		err = gpio_pin_interrupt_configure_dt(&int0, int_flags);
+	sensor_irq_enabled = err == 0;
+	if (err == -ENOTSUP)
+		LOG_WRN("IMU GPIO has no interrupt support; using timed FIFO polling");
+	else if (err)
+		return err;
 #else
 	LOG_WRN("IMU FIFO THS/WM/WTM GPIO does not exist");
 	LOG_WRN("IMU FIFO THS/WM/WTM not available");
@@ -788,6 +799,10 @@ static int packet_errors = 0;
 #define STATUS_INTERVAL_MS 5000
 
 static int64_t last_status_time = 0;
+#if CONFIG_SENSOR_DIAGNOSTICS
+static uint32_t diagnostic_accel_samples;
+static uint32_t diagnostic_gyro_samples;
+#endif
 static int64_t max_loop_time = 0;
 
 #if DEBUG
@@ -823,6 +838,8 @@ void sensor_loop(void)
 	while (1)
 	{
 		int64_t time_begin = k_uptime_get();
+		if (!sensor_irq_enabled)
+			sensor_data_time = k_uptime_ticks();
 		if (main_ok)
 		{
 #if DEBUG
@@ -1046,6 +1063,10 @@ void sensor_loop(void)
 			}
 
 			// Check packet processing
+#if CONFIG_SENSOR_DIAGNOSTICS
+			diagnostic_accel_samples += a_count;
+			diagnostic_gyro_samples += g_count;
+#endif
 			if ((packets != 0 || k_uptime_get() > 100) && processed_packets == 0)
 			{
 				if (packets)
@@ -1128,6 +1149,11 @@ void sensor_loop(void)
 		if (k_uptime_get() - last_status_time > STATUS_INTERVAL_MS)
 		{
 			last_status_time = k_uptime_get();
+#if CONFIG_SENSOR_DIAGNOSTICS
+			LOG_INF("IMU health: accel=%u gyro=%u packet_errors=%d irq=%d temp=%.2f q=[%.5f,%.5f,%.5f,%.5f]",
+				diagnostic_accel_samples, diagnostic_gyro_samples, packet_errors,
+				sensor_irq_enabled, (double)temp, (double)q[0], (double)q[1], (double)q[2], (double)q[3]);
+#endif
 			if (max_loop_time > 0)
 			{
 				LOG_WRN("Last update steps took up to %lld ms", max_loop_time);
@@ -1144,6 +1170,14 @@ void sensor_loop(void)
 		}
 
 #if IMU_INT_EXISTS
+		if (!sensor_irq_enabled)
+		{
+			if (time_delta > sensor_update_time_ms)
+				k_yield();
+			else
+				k_msleep(sensor_update_time_ms - time_delta);
+			continue;
+		}
 		sensor_data_time = 0; // reset data time
 		if (!main_wfi)
 		{
